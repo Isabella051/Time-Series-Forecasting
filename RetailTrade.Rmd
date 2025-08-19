@@ -1,0 +1,338 @@
+---
+title: ""
+output: html_document
+date: "2024-05-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fpp3)
+library(kableExtra)
+```
+
+1. Exploratory data analysis:
+- Write a brief description of the data set you have been given.
+- Visualise your time series (time plot, subseries plot, decomposition plot, etc) and discuss the features of the original time series.
+```{r}
+training_data <- read.csv("qgdp_training.csv") %>% 
+  select(c(Date, Retail.Trade)) %>% 
+  mutate(Date = yearquarter(Date)) %>%
+  as_tsibble(index = Date)
+training_data %>% 
+  autoplot(Retail.Trade) +
+  labs(x = "Time",
+       y = "Retail.Trade",
+       title = "Time Plot") 
+training_data %>%
+  gg_subseries(Retail.Trade) +
+  labs(x = "Year",
+       y = "Retail.Trade",
+       title = "Subseries Plot")
+training_data %>%
+  model(stl = STL(Retail.Trade, robust = TRUE)) %>% 
+  components() %>%
+  autoplot()
+```
+2. ETS models:
+- Explore different ETS models for your data set.
+- Describe the methodology used to create a shortlist of appropriate candidate ETS models. You are expected to fit these both manually and automatically.
+- Select the ETS model that you believe has the best predictive ability. Explain your reasons for selecting this model.
+- Write down the fitted model equations.
+```{r}
+# Fit the inferred ETS model
+ets_manual_AMA <- training_data %>%
+  model(ETS(Retail.Trade ~ error("A") + trend("M") + season("A")))
+ets_manual_AAM <- training_data %>%
+  model(ETS(Retail.Trade ~ error("A") + trend("A") + season("M")))
+ets_manual_AAA <- training_data %>%
+  model(ETS(Retail.Trade ~ error("A") + trend("A") + season("A")))
+ets_manual_MAN <- training_data %>%
+  model(ETS(Retail.Trade ~ error("M") + trend("A") + season("N")))
+ets_manual_MAM <- training_data %>%
+  model(ETS(Retail.Trade ~ error("M") + trend("A") + season("M")))
+ets_manual_MMM <- training_data %>%
+  model(ETS(Retail.Trade ~ error("M") + trend("M") + season("M")))
+ets_auto <- training_data %>%
+  model(ETS(Retail.Trade))
+
+# Compare the AIC values of the models
+aic_values <- bind_rows(
+  ets_manual_AMA %>% glance() %>% mutate(Model = "ETS(AMA)"),
+  ets_manual_AAM %>% glance() %>% mutate(Model = "ETS(AAM)"),
+  ets_manual_AAA %>% glance() %>% mutate(Model = "ETS(AAA)"),
+  ets_manual_MAN %>% glance() %>% mutate(Model = "ETS(MAN)"),
+  ets_manual_MAM %>% glance() %>% mutate(Model = "ETS(MAM)"),
+  ets_manual_MMM %>% glance() %>% mutate(Model = "ETS(MMM)"),
+  ets_auto %>% glance() %>% mutate(Model = "ETS(Auto)")
+) %>% arrange(AIC)
+
+print(aic_values)
+
+# Select the model with the lowest AIC value
+best_model_name <- aic_values %>% slice(1) %>% pull(Model)
+best_model <- switch(best_model_name,
+  "ETS(AMA)" = ets_manual_AMA,
+  "ETS(AAM)" = ets_manual_AAM,
+  "ETS(AAA)" = ets_manual_AAA,
+  "ETS(MAN)" = ets_manual_MAN,
+  "ETS(MAM)" = ets_manual_MAM,
+  "ETS(MMM)" = ets_manual_MMM,
+  "ETS(Auto)" = ets_auto
+)
+
+# Print the best model equation
+best_model_equation <- best_model %>%
+  report()
+
+print(best_model_equation)
+```
+3. ARIMA models:
+- Explore different ARIMA models for your data set.
+- Provide an explanation of any transformations and differencing required.
+- Describe the methodology used to create a shortlist of appropriate candidate ARIMA models. You are expected to fit these both manually and automatically.
+- Select the ARIMA model that you believe has the best predictive ability. Explain your reasons for selecting this model.
+- Write down the fitted model equation in backshift notation.
+```{r}
+ARIMA_data <- training_data
+ARIMA_data %>% autoplot(Retail.Trade) + labs(title = "ARIMA Retail Trade Forecasts", x = "Time", y = "Retail.Trade")
+# Provide an explanation of log transformations and differencing required.
+ARIMA_data %>% autoplot(log(Retail.Trade)) + labs(title = "ARIMA Retail Trade Forecasts", x = "Time", y = "Retail.Trade")
+
+# These functions suggest we should apply only one seasonal difference(no first difference).
+ARIMA_data %>%
+  mutate(log_Retail_Trade = log(Retail.Trade)) %>% features(log_Retail_Trade, unitroot_nsdiffs)
+ARIMA_data %>% 
+  mutate(d_log_Retail_Trade = difference(log(Retail.Trade), 12)) %>%
+  features(d_log_Retail_Trade, unitroot_ndiffs)
+# Check whether it is a stationary time series
+ARIMA_data %>% autoplot(log(Retail.Trade) %>% difference(4))
+# Plot the ACF/PACF of the differenced data and try to determine possible candidate models.
+ARIMA_data %>% gg_tsdisplay(log(Retail.Trade)%>% difference(4),plot_type = "partial", lag_max = 16)
+# Fit these both manually and automatically.
+# Features of an AR(p) model the ACF is exponentially decaying or sinusoidal. There is a significant spike at lag p in the PACF, but none beyond lag p.
+# Features of an MA(q) model there is a significant spike at lag q in the ACF, but none beyond lag q. The PACF is exponentially decaying or sinusoidal.
+ARIMA_fit <- ARIMA_data %>%
+  model(auto = ARIMA(log(Retail.Trade), stepwise = FALSE, approximation = FALSE),
+        arima200210 = ARIMA(log(Retail.Trade) ~ pdq(2,0,0) + PDQ(2,1,0)),
+        arima201210 = ARIMA(log(Retail.Trade) ~ pdq(2,0,1) + PDQ(2,1,0)),
+        arima202210 = ARIMA(log(Retail.Trade) ~ pdq(2,0,2) + PDQ(2,1,0)),
+        arima003210 = ARIMA(log(Retail.Trade) ~ pdq(0,0,3) + PDQ(2,1,0)))
+
+# We select the best models by minimizing the AIC, AICc or BIC. We would prefer to use AICc.
+glance(ARIMA_fit) %>% arrange(AICc) %>% select(.model:BIC)
+
+# Details of the optimal model are given
+best_ARIMA_model <- ARIMA_fit %>% select(auto)
+report(best_ARIMA_model)
+```
+
+4. Neural network autoregression (NNAR) models:
+- In Chapter 12 of the fpp3 online textbook, there is an advanced topic on the Neural Network Autogregressive (NNAR) model.
+- Read this chapter and any other materials that will help you understand the NNAR model.
+- In your own words, explain the NNAR model as if you were teaching it to your fellow classmates.
+- Fit an automatic NNAR model to your data set and report the fitted model.
+```{r}
+fit_NNAR <- training_data %>%
+  model(NNETAR(Retail.Trade)) %>%
+  report()
+```
+
+5. Assumption checking:
+- Produce residual diagnostic plots for your three chosen models (ETS, ARIMA, NNAR).
+- Do not perform a Box-Pierce or Ljung-Box test.
+- Research the topic of surrogate data testing in time series, specifically, the Random Shuffle method. Explain this test for independence as if you were teaching it to your fellow classmates.
+- Test the independence of your residuals (or innovation residuals) using the surrogate_test.R code provided. Explain how the R code works.
+
+```{r ETS_5}
+source("surrogate_test.R")
+# Assumption checking
+residuals_MAM <- residuals(ets_manual_MAM, lag_max= 8)
+gg_tsresiduals(ets_manual_MAM)
+
+set.seed(1)
+n_simulations <- 1000
+
+# Calculate the autocorrelation of the original residuals
+original_acf <- residuals_MAM %>% ACF(var = .resid) %>% pull(acf) %>% .[2]
+
+surrogate_acfs <- replicate(n_simulations, {
+  shuffled_residuals <- sample(residuals_MAM$.resid)
+  acf(shuffled_residuals, plot = FALSE)$acf[2]
+})
+
+# Draw a comparison chart of the autocorrelations of the original residuals and the substituted residuals
+surrogate_acfs_df <- tibble(acf = surrogate_acfs)
+p4 <- surrogate_acfs_df %>%
+  ggplot(aes(x = acf)) +
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.7) +
+  geom_vline(xintercept = original_acf, color = "red", linetype = "dashed") +
+  ggtitle("Surrogate ACF Distribution vs Original ACF") +
+  labs(x = "ACF", y = "Frequency") +
+  annotate("text", x = original_acf, y = max(table(cut(surrogate_acfs, breaks = 30))), 
+           label = paste("Original ACF =", round(original_acf, 3)), 
+           vjust = 2, hjust = -0.2, color = "red")
+print(p4)
+
+# p-value
+p_value <- mean(abs(surrogate_acfs) >= abs(original_acf))
+cat("P-value for the independence test:", p_value, "\n")
+
+if (p_value < 0.05) {
+  cat("The test rejects the null hypothesis of independence (p-value < 0.05).\n")
+} else {
+  cat("The test does not reject the null hypothesis of independence (p-value >= 0.05).\n")
+}
+
+# test
+lag <- 8
+surrogate_result <- surrogate.test(residuals_MAM, lag = lag, N = 1000, test.stat = "ljung-box")
+print(surrogate_result)
+plot.surrogate(surrogate_result)
+
+```
+
+```{r ARIMA_5}
+#Check the residuals from your chosen model by plotting the ACF of the residuals.
+best_ARIMA_model %>% gg_tsresiduals()
+
+#Research the topic of surrogate data testing in time series
+ARIMA_residuals <- residuals(best_ARIMA_model)
+
+# 设定随机种子和模拟次数
+set.seed(123)
+n_simulations <- 1000
+
+# 计算原始残差的自相关性
+original_acf <- ARIMA_residuals %>% ACF(var = .resid) %>% pull(acf) %>% .[2]
+# 生成替代数据并计算自相关性
+surrogate_acfs <- replicate(n_simulations, {
+  shuffled_residuals <- sample(ARIMA_residuals$.resid)
+  acf(shuffled_residuals, plot = FALSE)$acf[2]
+})
+
+# 绘制原始残差和替代残差自相关性的比较图
+surrogate_acfs_df <- tibble(acf = surrogate_acfs)
+p4 <- surrogate_acfs_df %>%
+  ggplot(aes(x = acf)) +
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.7) +
+  geom_vline(xintercept = original_acf, color = "red", linetype = "dashed") +
+  ggtitle("Surrogate ACF Distribution vs Original ACF") +
+  labs(x = "ACF", y = "Frequency") +
+  annotate("text", x = original_acf, y = max(table(cut(surrogate_acfs, breaks = 30))), 
+           label = paste("Original ACF =", round(original_acf, 3)), 
+           vjust = 2, hjust = -0.2, color = "red")
+print(p4)
+
+# 执行替代数据测试
+ARIMA_lag <- 4 # 季节性数据滞后数(4的倍数)，可以根据具体情况调整
+ARIMA_surrogate_result <- surrogate.test(ARIMA_residuals, lag = ARIMA_lag, N = 1000, test.stat = "ljung-box")
+# 打印测试结果
+print(ARIMA_surrogate_result)
+# 绘制替代数据检验统计量分布图
+plot.surrogate(ARIMA_surrogate_result)
+```
+
+```{r NNAR_5}
+# Residual diagnostic plots
+fit_NNAR %>% gg_tsresiduals()
+
+# Test the independence of your residuals
+s = surrogate.test(na.omit(residuals(fit_NNAR)), lag=8, N = 10000, test.stat = "ljung-box")
+s$p.value                                    
+### The p-value > 0.05, we do not reject residuals from the model resemble a white noise.
+s %>% 
+  plot.surrogate() + 
+  theme_bw() +
+  labs(title = "Surrogate data test with Box-Pierce statistic")
+```
+
+6. Forecasting:
+- For your three chosen models, produce forecasts (point-forecasts and prediction intervals) for the h=8 quarters up to and including 2023 Q4.
+- Explain how the prediction intervals are calculated for your chosen models.
+- When the test set becomes available on Canvas 48-hours before the due time, compare your forecasts with the test set by evaluating model accuracy.
+- Write a small discussion on how well your three models performed at forecasting.
+```{r ETS_6}
+# Forecasting
+h <- 8  
+forecast_MAM <- ets_manual_MAM %>%
+  forecast(h = h)
+
+print(forecast_MAM)
+
+full_data <- read.csv("qgdp_full.csv") %>% 
+  select(c(Date, Retail.Trade)) %>% 
+  mutate(Date = yearquarter(Date)) %>%
+  as_tsibble(index = Date)
+
+# plot
+autoplot(full_data, Retail.Trade) +
+  autolayer(forecast_MAM, level = NULL) +
+  labs(title = "Retail Trade Forecasts", x = "Time", y = "Retail.Trade") +
+  guides(colour = guide_legend(title = "Models"))
+
+autoplot(full_data, Retail.Trade) +
+  autolayer(forecast_MAM) +
+  labs(title = "Retail Trade Forecasts", x = "Time", y = "Retail.Trade") +
+  guides(colour = guide_legend(title = "Models"))
+
+accuracy(forecast_MAM, full_data) %>% 
+  select(.model, RMSE, MAE, MAPE, MASE)
+```
+
+```{r ARIMA_6}
+# produce forecasts (point-forecasts and prediction intervals) for the h=8 quarters up to and including 2023 Q4.
+best_ARIMA_model %>% 
+  forecast(h = 8) %>%
+  autoplot(ARIMA_data, level = NULL) + 
+  labs(title = "ARIMA Retail Trade Forecasts", x = "Time", y = "Retail.Trade")
+
+best_ARIMA_model %>% 
+  forecast(h = 8) %>%
+  autoplot(ARIMA_data) + 
+  labs(title = "ARIMA Retail Trade Forecasts", x = "Time", y = "Retail.Trade")
+
+ARIMA_forecast_data <- forecast(best_ARIMA_model, h = 8)
+
+ARIMA_actual_values <- full_data %>% 
+  tail(8) %>% 
+  pull(Retail.Trade)
+ARIMA_predicted_values <- ARIMA_forecast_data %>% 
+  pull(.mean)
+
+ARIMA_comparison <- tibble(
+  Date = full_data %>% tail(8) %>% pull(Date),
+  Actual = ARIMA_actual_values,
+  Predicted = ARIMA_predicted_values
+)
+
+ARIMA_mse <- mean((ARIMA_comparison$Actual - ARIMA_comparison$Predicted)^2)
+ARIMA_mae <- mean(abs(ARIMA_comparison$Actual - ARIMA_comparison$Predicted))
+ARIMA_rmse <- sqrt(ARIMA_mse)
+
+ARIMA_error_metrics <- tibble(
+  MSE = ARIMA_mse,
+  MAE = ARIMA_mae,
+  RMSE = ARIMA_rmse
+)
+print(ARIMA_comparison)
+print(ARIMA_error_metrics)
+
+best_ARIMA_model %>% 
+  forecast(h = 8) %>%
+  autoplot(full_data) + 
+  labs(title = "ARIMA Retail Trade Forecasts", x = "Time", y = "Retail.Trade")
+```
+
+```{r NNAR_6}
+# Forecasting
+forecast_NNAR <- fit_NNAR %>% forecast(h = 8)
+# plot
+autoplot(full_data) +
+  autolayer(forecast_NNAR) +
+  labs(title = "Retail Trade NNAR Forecasts", x = "Time", y = "Retail.Trade")
+
+accuracy(forecast_NNAR, full_data) %>% 
+  select(.model, RMSE, MAE, MAPE, MASE)
+```
+
