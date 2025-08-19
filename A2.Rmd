@@ -1,0 +1,262 @@
+---
+title: "STATS 326/786"
+author: "Assignment 02"
+date: \today
+fontsize: 11pt
+output:
+  bookdown::html_document2:
+    fig_height: 5
+    toc: yes
+    toc_depth: 1
+    toc_float:
+      collapsed: false
+    number_sections: false
+    code_folding: show
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fpp3)
+library(kableExtra)
+```
+
+:::: {.infobox .caution}
+
+**General comments:**
+
+- All the plots should be labelled appropriately (axes, legends, titles). 
+    
+- Please submit both your `.Rmd`, and the generated output file `.html` or `.pdf` on Canvas before the due date/time.
+    
+- Please make sure that the `.Rmd` file compiles without any errors. The marker will not spend time fixing the bugs in your code.
+    
+- Please avoid specifying absolute paths. 
+    
+- Your submission must be original, and if we recognize that you have copied answers from another student in the course, we will deduct your marks.
+
+- You will need to use the `tidyverse` and `fpp3` libraries for this assignment.  
+
+- IMPORTANT NOTE: There are some questions that are for `r text_spec("STATS 786 only", background = "seagreen", color = "white")`.  Students taking STATS 326, while you are welcome to attempt these questions, please do not submit answers to them.  
+
+**Due: Friday 29 March 2024 at 16:00 PM (NZ time)**
+::::
+
+
+
+# Problem 1: Monthly Average Auckland Temperatures
+
+In Assignment 1, you investigated monthly average temperatures in Auckland.  In this problem, you will do some further analysis.  The data set `auckland_temps.csv` contains the monthly average temperatures in Auckland from July 1994 until January 2024.  The time series plot is given below.  
+
+```{r, echo = FALSE, message = FALSE}
+data <- read_csv("auckland_temps.csv") %>%
+  mutate(Month = yearmonth(Month)) %>%
+  as_tsibble(index = Month)
+
+data %>%
+  autoplot(Temperature) +
+  labs(y = "Temperature (\u00B0C)",
+       title = "Monthly Average Temperatures in Auckland (Jul 1994 - Jan 2024)")
+```
+
+
+> 1. `r text_spec("7 Marks", background = "blueviolet", color = "white")`
+- Without using the `box_cox` function in the `feasts` package, create a new variable by manually performing a Box-Cox transformation on `Temperature` with $\lambda = 0.5$.
+- Plot the Box-Cox transformed `Temperature` time series and correlogram (setting `lag_max = 36`).
+- Comment on the patterns you observe in the correlogram.  Hint: Think about your answer to the lag plot question in Assignment 1.  
+
+```{r}
+lambda = 0.5
+data <- data %>%
+  mutate(Temperature_trasformed = (Temperature^lambda - 1) / lambda) 
+
+data %>%
+  autoplot(Temperature_trasformed) +
+  labs(title = "Box-Cox Transformed Temperature Time Series",
+       x = "Month",
+       y = "Transformed Temperature")
+
+data %>%
+  ACF(Temperature_trasformed, lag_max = 36) %>%
+  autoplot() +
+  labs(title = "Correlogram of Box-Cox Transformed Temperature")
+
+
+### Comment: The correlogram graph exhibits clear seasonality, as temperatures cycle through the twelve months of the year. At a lag of 6, the seasons are opposite so it displays a strong negtive correlation, while at a lag of 12, representing a complete cycle of the four seasons, the seasons are the same, and the temperatures are almost identical, displaying a strong positive correlation.
+```
+
+
+> 2. `r text_spec("7 Marks", background = "blueviolet", color = "white")`
+- Perform an STL decomposition on the Box-Cox transformed temperatures.  Keep the defaults for the trend and seasonal components, but specify `robust = TRUE` for the remainder component.
+- Plot the time series decomposition and comment on features you observe in the three components of the time series.  Do you believe average temperatures in Auckland are rising? (Yes or no). 
+
+```{r}
+dcmp <- data %>%
+  model(stl = STL(Temperature_trasformed, robust = TRUE))
+components(dcmp) %>%
+  autoplot()
+
+### Comment: Yes, average temperatures in Auckland are rising. In the second "trend" graph, there is a gradual upward trend in temperature.
+```
+
+
+> 3. `r text_spec("8 Marks", background = "blueviolet", color = "white")`
+- Explain why you would seasonally adjust the Box-Cox transformed temperature series you created in (1).  
+- Comment on how the seasonally-adjusted series for the Box-Cox transformed temperature series is calculated when performing the STL decomposition in (2).  
+- Plot the seasonally-adjusted series for the Box-Cox transformed temperatures by extracting it from your STL decomposition model, and plot the subseries plot of the seasonally-adjusted series.  Comment on whether there is seasonality still present.
+- Conclude whether you believe STL decomposition is doing a good job of performing seasonal adjustment on the Box-Cox adjusted temperatures.
+
+```{r}
+## After seasonal adjusting, it becomes clearer to observe the temperature's change trend.
+
+## In STL decomposition, the purpose of seasonality adjustment on temperature is to separate the genuine trend and residual components, removing the seasonal fluctuations from the original data. So the trend component can show the long-term variation of temperature over time.
+
+data %>%
+  autoplot(Temperature_trasformed, color = "grey") +
+  autolayer(components(dcmp), season_adjust, color = "black") +
+  theme_minimal() +
+  labs(title = "Seasonally-adjusted series for the Box-Cox transformed temperatures")
+
+components(dcmp) %>% 
+  gg_subseries(Temperature_trasformed) +
+  labs(title = "Subseries plot of the seasonally-adjusted series")
+
+## The temperatures in these two graphs appear to fluctuate, but there are no clear seasonal patterns, such as regular peaks or troughs repeating each year.
+## So I believe STL decomposition is doing a good job of performing seasonal adjustment.
+```
+
+
+> 4. `r text_spec("5 Marks", background = "blueviolet", color = "white")`
+- Plot the correlogram of the `remainder` term from the STL decomposition.
+- Comment on any interesting features you observe in the correlogram and explain whether the remainder term is consistent with white noise.
+- Verify your conclusion by performing a Ljung-Box test (using `lag = 24` and `dof = 0`).
+
+```{r}
+data %>%
+  ACF(components(dcmp)[, "remainder"]) %>%
+  autoplot() +
+  labs(title = "Correlogram")
+
+## Comment: some values are out of blue lines and slight seasonality is present in the data. So it's not white noise.
+
+Box.test(components(dcmp)[, "remainder"], lag = 24, type = "Ljung-Box", fitdf = 0)
+
+## Because the p-value is less than 0.05, we should reject the null hypothesis that there is no autocorrelation in the time series. So it's not white noise.
+
+```
+
+> Total possible marks for **Problem 1**: `r text_spec("27 Marks", background = "blueviolet", color = "white")`
+
+
+
+# Problem 2: NVIDIA Closing Stock Prices
+
+NVIDIA are world leaders in developing GPUs used for gaming and artificial intelligence.  The data set `NVIDIA.csv` contains daily closing stock prices (in USD) from 13 March 2023 until 11 March 2024.  
+
+> 1. `r text_spec("6 Marks", background = "blueviolet", color = "white")`
+- In this question, you will explore whether there is weekly seasonality, i.e., a day-of-the-week effect.  However, stock markets close in the weekends so the time series is irregular, meaning seasonal plots are not straightforward to make.  We will take a different approach.
+- Read in the `NVIDIA.csv` data set, ensure `Date` is in an appropriate date format, and coerce it to a `tsibble` setting `index = Date`.  
+- Within this data set, create a day-of-the-week variable (with labels).  The variable should have days Mon--Fri. 
+- Using `ggplot` and `geom_boxplot`, create a box-plot showing the distribution of the closing stock price for each day of the week (Monday - Friday).
+- Comment on whether there is a day-of-the-week effect.  
+
+```{r}
+NVIDIA <- read_csv("NVIDIA.csv") %>%
+  mutate(Date = dmy(Date)) %>%
+  as_tsibble(index = Date)
+
+NVIDIA <- NVIDIA %>%
+  mutate(Day = wday(Date, label = TRUE))
+
+NVIDIA %>%
+  ggplot(mapping = aes(x = Day, y = Close)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of the closing stock price for each day of the week",
+       x = "Day",
+       y = "Closing stock price")
+
+## Comment: no, there is no day-of-the-week effect as price in every day are almost the same.
+
+```
+
+
+> 2. `r text_spec("12 Marks", background = "blueviolet", color = "white")`
+- There are gaps in the NVIDIA data set due to there being no observations for the weekend.  Create a trading day variable using the `row_number` function, and update your `tsibble` such that the index is now the trading day.  
+- Fit the following three benchmark forecast models to the closing stock prices for NVIDIA: Average method, naive method, and random-walk with drift method.
+- Forecast 20 trading days ahead and plot your forecasts on the same plot as the closing stock price time series.  For your forecasts, only plot the point-forecasts, and not the prediction intervals.
+- Of the three models, which one do you believe produces the worst forecasts?  Explain your answer.
+- Of the three models, which one do you believe produces the best forecasts?  Explain your answer.  
+
+```{r}
+NVIDIA <- NVIDIA %>%
+  mutate(Trading_day = row_number()) %>%
+  update_tsibble(index = Trading_day, regular = TRUE)
+
+## forecast models
+models <- NVIDIA %>%
+  model(
+    Mean = MEAN(Close),
+    Naive = NAIVE(Close),
+    RWwD = RW(Close ~ drift())
+  )
+
+## Forecast 20 trading days ahead
+forecasts <- models %>%
+  forecast(h = 20)
+point_forecasts <- hilo(forecasts, level = 0)
+
+NVIDIA %>%
+  autoplot(Close) +
+  autolayer(point_forecasts, series = "Point Forecast") +
+  labs(title = "Closing stock price time series",
+       x = "Trading days",
+       y = "Closing stock price") 
+
+# The mean method produces the worst forecasts, as it deviates significantly from the current stock price.
+# The random-walk with drift method produces the best forecasts, as it simulates the trend of the stock.
+
+```
+
+> Total possible marks for **Problem 2**: `r text_spec("18 Marks", background = "blueviolet", color = "white")`
+
+
+
+# Problem 3: Trading-day Adjustments
+
+`r text_spec("STATS 786 only", background = "seagreen ", color = "white")` `r text_spec("10 Marks", background = "seagreen", color = "white")` 
+
+In class you learned about calendar adjustments.  A similar type of adjustment is trading-day adjustments.  For a monthly series, this amounts to dividing the time series by the number of trading days (i.e., weekdays that are not public holidays).  A widget business in Auckland is closed on weekends and all public holidays relevant to Auckland.  The business measures the amount of revenue made per month, but wants to account for the number of trading days in each month.  Find the denominator for a trading-day adjustment for each month of 2024. Print these 12 numbers in a `tibble`.
+
+The following website will be helpful: https://www.govt.nz/browse/work/public-holidays-and-work/public-holidays-and-anniversary-dates/
+
+```{r}
+public_holidays_2024 <- ymd(c("2024-01-01", "2024-01-02", "2024-01-29", 
+                                  "2024-02-06", "2024-03-29", "2024-04-01", 
+                                  "2024-04-25", "2024-06-03", "2024-06-28", 
+                                  "2024-10-28", "2024-12-25", "2024-12-26"))
+
+day_in_month <- days_in_month(ymd(sprintf("2024-%02d-01", 1:12)))
+
+trading_days <- sapply(1:12, function(mon) {
+  weekdays <- sum(!weekdays(seq(ymd(paste0("2024-", sprintf("%02d", mon), "-01")), 
+                                      length.out = day_in_month[mon], by = "day")) 
+                                      %in% c("Saturday", "Sunday"))
+  holidays <- sum(seq(ymd(paste0("2024-", sprintf("%02d", mon), "-01")), 
+                                      length.out = day_in_month[mon], by = "day")
+                                      %in% public_holidays_2024)
+  weekdays - holidays
+})
+
+months <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dece")
+tibble <- tibble(Month = months, Trading_days = trading_days)
+print(tibble)
+
+```
+
+
+> Total possible marks for **Problem 3**: `r text_spec("10 Marks for 786", background = "seagreen", color = "white")`
+
+> Total possible marks for **Assignment 2**: `r text_spec("45 Marks for 326", background = "blueviolet", color = "white")` `r text_spec("55 Marks for 786", background = "seagreen", color = "white")`
+
+

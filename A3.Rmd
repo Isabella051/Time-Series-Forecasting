@@ -1,0 +1,283 @@
+---
+title: "STATS 326/786"
+author: "Assignment 03"
+date: \today
+fontsize: 11pt
+output:
+  bookdown::html_document2:
+    fig_height: 5
+    toc: yes
+    toc_depth: 1
+    toc_float:
+      collapsed: false
+    number_sections: false
+    code_folding: show
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fpp3)
+library(kableExtra)
+library(gt)
+```
+
+:::: {.infobox .caution}
+
+**General comments:**
+
+- All the plots should be labelled appropriately (axes, legends, titles). 
+    
+- Please submit both your `.Rmd`, and the generated output file `.html` or `.pdf` on Canvas before the due date/time.
+    
+- Please make sure that the `.Rmd` file compiles without any errors. The marker will not spend time fixing the bugs in your code.
+    
+- Please avoid specifying absolute paths. 
+    
+- Your submission must be original, and if we recognize that you have copied answers from another student in the course, we will deduct your marks.
+
+- You will need to use the `tidyverse` and `fpp3` libraries for this assignment.  
+
+- IMPORTANT NOTE: There are some questions that are for `r text_spec("STATS 786 only", background = "seagreen", color = "white")`.  Students taking STATS 326, while you are welcome to attempt these questions, please do not submit answers to them.  
+
+**Due: Friday 3 May 2024 at 16:00 PM (NZ time)**
+::::
+
+
+# Problem 1: Monthly Average Auckland Temperatures
+
+In Assignments 1 and 2, you investigated monthly average temperatures in Auckland.  In this problem, you will do some further analysis.  The data set `auckland_temps.csv` contains the monthly average temperatures in Auckland from July 1994 until January 2024.  The time series plot is given below.  For this question do not Box-Cox transform the data.
+
+```{r, echo = FALSE, message = FALSE}
+data <- read_csv("auckland_temps.csv") %>%
+  mutate(Month = yearmonth(Month)) %>%
+  as_tsibble(index = Month)
+
+data %>%
+  autoplot(Temperature) +
+  labs(y = "Temperature (\u00B0C)",
+       title = "Monthly Average Temperatures in Auckland (Jul 1994 - Jan 2024)") +
+  theme_bw()
+```
+
+> 1. `r text_spec("12 Marks", background = "blueviolet", color = "white")`
+- Recall from class that you can forecast with time series decomposition by forecasting the seasonal component and seasonally-adjusted series separately.  The seasonal component will automatically be forecasted using the default `SNAIVE` method, but you will need to specify which benchmark methods you are using on the seasonally-adjusted series.  
+- Create a training set by filtering out the most recent 2 years from the temperature data.  The training set should contain dates `1994 Jul` until `2022 Jan`.
+- Fit an STL model (with `robust = TRUE`) to the training set, and using the seasonally-adjusted series from this STL decomposition, fit the naive (`NAIVE`), the average (`MEAN`) and the random walk with drift (`RW`) benchmark forecast methods. The `decomposition_model` function will be helpful.  Also fit a seasonal naive (`SNAIVE`) to the training set (without doing an STL decomposition).
+- Forecast 2 years up until `2024 Jan` so that you can compare what actually happened in the real data to what you predict would have happened with your forecast models.
+- Plot the point-forecasts with the original data with `autoplot`.  Do not plot the prediction intervals (this can be achieved with the argument `level = NULL`).  
+- Evaluate the point-forecasts by computing and comparing the forecast accuracy measures discussed in class.  
+- Discuss which forecast method is better for monthly average Auckland temperatures, and why.
+
+```{r}
+# Create a training set
+training_set <- filter(data, data[[1]] < yearmonth("2022 Feb"))
+# Fit the seasonally-adjusted series
+naive_fit <- training_set %>%
+  model(naive = decomposition_model(                    
+    STL(Temperature ~ trend(window = 7), robust = TRUE),  
+    NAIVE(season_adjust)))
+mean_fit <- training_set %>%
+  model(mean = decomposition_model(                    
+    STL(Temperature ~ trend(window = 7), robust = TRUE),  
+    MEAN(season_adjust)))
+drift_fit <- training_set %>%
+  model(drift = decomposition_model(                    
+    STL(Temperature ~ trend(window = 7), robust = TRUE), 
+    RW(season_adjust ~ drift())))
+# Fit seasonal naive method to the training set
+snaive_fit <- training_set %>%
+  model(snaive = SNAIVE(Temperature)) 
+# Forecast
+naive_fc <- naive_fit %>% 
+  forecast(h = "2 years") 
+mean_fc <- mean_fit %>% 
+  forecast(h = "2 years") 
+drift_fc <- drift_fit %>% 
+  forecast(h = "2 years") 
+snaive_fc <- snaive_fit %>% 
+  forecast(h = "2 years") 
+# Plot the forecast
+all_fc <- bind_rows(naive_fc, mean_fc, drift_fc, snaive_fc)
+all_fc %>%
+  autoplot(data, level = NULL) + 
+  ggtitle("Plot of point-forecasts with the original") + 
+  theme_minimal()
+# Evaluate the point-forecasts by computing
+accuracy(all_fc, data)
+
+
+## As snaive method has the smallest value for MAE, RMSE, MAPE and MASE, snaive method is the best.
+```
+
+> Total marks for **Problem 1**: `r text_spec("12 Marks", background = "blueviolet", color = "white")`
+
+
+
+# Problem 2: Time series regression
+
+The data set `tsr.csv` is a data set containing quarterly measurements of an anonymised variable from 2000 Q1 until 2023 Q4.  The time series is plotted below.  You will notice the following features in this time series:
+
+- Seasonality.
+- Linear trend with level shift (steps).
+- Outliers (spikes). 
+
+```{r, echo = FALSE, message = FALSE}
+data = read_csv("tsr.csv") %>%
+  mutate(Quarter = yearquarter(Quarter)) %>%
+  as_tsibble(index = Quarter)
+
+data %>%
+  autoplot(Measurement) +
+  theme_bw()
+```
+
+
+> 1. `r text_spec("4 Marks", background = "blueviolet", color = "white")`
+Using any approach you want, find the three quarters that the outliers occur at.  Create a dummy variable that is 1 at these three quarters and 0 otherwise. Note: Usually when dealing with outliers, you would create a dummy variable for each individual outlier.  However, here you may assume the outliers are due to the same phenomenon, so only create one dummy variable for all three outliers.  
+
+```{r}
+data <- data %>%
+  mutate(Outlier = ifelse(Measurement > 20, 1, 0))
+```
+
+
+> 2. `r text_spec("4 Marks", background = "blueviolet", color = "white")`
+Using any approach you want, find the quarter at which the level-shift occurs (i.e., where the time series level moves up).  Create a dummy variable for the level-shift that takes the value 1 from that quarter onwards and 0 otherwise.  
+
+```{r}
+indice <- which(diff(data$Measurement)>5 & diff(data$Measurement)<10)[1]
+data <- data %>%
+  mutate(LevelShift = 0) 
+data$LevelShift[(indice+1) : length(data$LevelShift)] = 1
+```
+
+
+> 3. `r text_spec("6 Marks", background = "blueviolet", color = "white")`
+Fit the following three different time series regression models.
+- Model 1: Linear trend with level shift and seasonal factors.
+- Model 2: Linear trend with level shift, seasonal factors, and outliers. 
+- Model 3: Linear trend with level shift, $K = 1$ Fourier terms, and outliers.  
+
+```{r}
+# Model 1
+model_1 <- data %>% 
+  model(TSLM(Measurement ~ trend() + LevelShift + season()))
+# Model 2
+model_2 <- data %>% 
+  model(TSLM(Measurement ~ trend() + LevelShift + season() + Outlier))
+# Model 3
+model_3 <- data %>% 
+  model(TSLM(Measurement ~ trend() + LevelShift + fourier(K = 1) + Outlier))
+```
+
+
+> 4. `r text_spec("6 Marks", background = "blueviolet", color = "white")`
+Plot the original time series with the three sets of fitted values and comment on how well each model fits the data.  
+
+```{r}
+all_fit <- bind_rows(
+  augment(model_1) %>% mutate(Model = "Model 1"),
+  augment(model_2) %>% mutate(Model = "Model 2"),
+  augment(model_3) %>% mutate(Model = "Model 3"))
+all_fit %>% 
+  ggplot(aes(x = Quarter)) +
+  geom_line(aes(y = Measurement)) +
+  geom_line(aes(y = .fitted, colour = Model)) + 
+  guides(colour = guide_legend(title = NULL)) + 
+  labs( title = "Plot of forecasts of three models") +
+  theme_minimal()
+```
+
+
+> 5. `r text_spec("6 Marks", background = "blueviolet", color = "white")`
+Compare the three models using AICc and the CV-statistic and conclude which model has the best predictive ability. This will be your selected model for the questions to follow. Report the estimates for your selected model. 
+
+```{r}
+rbind(glance(model_1) %>% select(.model, AICc, CV),
+      glance(model_2) %>% select(.model, AICc, CV),
+      glance(model_3) %>% select(.model, AICc, CV))
+## As model 2 has the smallest AICc and CV values, it has the best predictive ability.
+report(model_2)
+```
+
+
+> 6. `r text_spec("10 Marks", background = "blueviolet", color = "white")`
+Check the model assumptions for your chosen model. You will need to assess linearity, independence, normality, zero mean, and equality of variance. 
+Note 1: Linearity can be checked by comparing the observed versus fitted values.  
+Note 2: For the Ljung-Box test, you can find the number of estimated parameters in the report you produced in (5), and because this is a seasonal time series, use $2m$ lags.  
+
+```{r}
+model_2 %>% gg_tsresiduals()
+augment(model_2) %>%
+  features(.resid, ljung_box, lag = 8, dof = 7)
+
+# The residuals do not exhibit any obvious patterns or trends and show no autocorrelation. Based on the third plot, the residuals appear to be close to a normal distribution. The mean of the residuals is close to zero, consistent with the assumption of zero mean.
+# P-value < 0.05, so we accept the hypothesis that innovation residuals from the model resemble a white noise which has equality of variance.
+```
+
+
+> 7. `r text_spec("8 Marks", background = "blueviolet", color = "white")`
+Regardless of your assumption check, forecast four years into the future for your chosen model. Plot your forecasts with the 90% and 99% prediction intervals. 
+Hint 1: The `new_data` function may be helpful. 
+Hint 2: You will need to provide values for the two dummy predictors you created. Assume that no outliers will occur in these four years.  
+
+```{r}
+future_scenarios <- scenarios(
+  new_data(data, 16) %>%
+    mutate(Outlier = 0, LevelShift = 1))
+fc <- model_2 %>%
+  forecast(new_data = future_scenarios)
+data %>%
+  autoplot(Measurement) +
+  autolayer(fc, level = c(90, 99)) +
+  labs(title = "Plot of forecasts",
+       y = "Measurement") +
+  theme_minimal()
+```
+
+
+
+> 8. `r text_spec("4 Marks", background = "blueviolet", color = "white")`
+Output and interpret the 90% prediction interval for the 1-step forecast of your chosen model (i.e., for `2024 Q1`). 
+Hint: The `hilo` function may be helpful. 
+Note: You may need to knit your document to see the output.
+
+```{r}
+fc[1,] %>%
+  hilo(level = 90) %>%
+  select('90%')
+
+# The 90% prediction interval is (11,13), so the estimated value has 90% pobability to be in this interval.
+```
+
+
+> 9. `r text_spec("STATS 786 only", background = "seagreen ", color = "white")` `r text_spec("10 Marks", background = "seagreen", color = "white")` 
+For this question, you will manually calculate the cross-validation statistic for your selected time series regression model.  Recall that there is a shortcut to performing cross-validation that does not require computation over many training/test sets.  If $X$ is the design matrix (matrix of predictor variables), then $H = X (X^T X)^{-1} X^T$ is called the hat matrix.  The cross-validation statistic can be computed as $\text{CV} = \frac{1}{T} \sum_{t=1}^T \left(\frac{e_t}{1 - h_t}\right)^2$, where $e_t$ are the residuals from the fitted model and $h_t$ are the diagonal elements of the hat matrix.  You will need to create your own design matrix $X$ that contains only the predictor variables in your chosen model.  You will have to create variables for your trend and seasonal predictors, as well as the intercept. Make sure the matrix object does not contain the dates or measurements. Useful matrix functions include `%*%`, `t`, `crossprod`, `solve`, `diag`.  Verify your answer by comparing to the CV-statistic you produced in (5).
+
+```{r}
+intercept <- rep(1, length(data$Quarter)) 
+trend <- scale(1:nrow(data))
+season_year2 = ifelse(quarter(data$Quarter) == 2, 1, 0)
+season_year3 = ifelse(quarter(data$Quarter) == 3, 1, 0)
+season_year4 = ifelse(quarter(data$Quarter) == 4, 1, 0)
+# Create design matrix X
+X <- cbind(intercept, trend, data$LevelShift, season_year2, season_year3, season_year4, data$Outlier)
+# Calculate the hat matrix H
+H <- X %*% solve(crossprod(X)) %*% t(X)
+# Extract the diagonal elements of H
+h <- diag(H)
+# Calculate the cross-validation statistic CV
+residuals <- model_2[[1]][[1]]$fit$residuals
+CV <- mean((residuals / (1 - h))^2)
+print(CV)
+glance(model_2) %>% select(CV)
+
+```
+
+> Total marks for **Problem 2**: `r text_spec("48 Marks for 326", background = "blueviolet", color = "white")` `r text_spec("58 Marks for 786", background = "seagreen", color = "white")`
+
+> Total possible marks for **Assignment 3**: `r text_spec("60 Marks for 326", background = "blueviolet", color = "white")` `r text_spec("70 Marks for 786", background = "seagreen", color = "white")`
+
+
