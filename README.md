@@ -53,4 +53,14 @@
 - Manually compute the cross-validation for the selected regression model using the hat matrix method
 - Construct the design matrix X with trend, seasonal, and dummy variables
 
+## 4. Retail Trade
+[Retail Trade.html](https://isabella051.github.io/Time-Series-Forecasting/RetailTrade.html)
+
+- Create time plot, subseries plot, decomposition plot and discuss the features (autoplot, gg_subseries, STL)
+- Fit different **ETS** models (ETS)
+- Select the model with the lowest AIC value
+- Fit different **ARIMA** models (gg_tsdisplay)
+- Produce **residual diagnostic** plots for the ETS model
+- Test the independence of your residuals using the **surrogate_test**
+- Produce point forecasts and prediction intervals (accuracy, forecast)
 
